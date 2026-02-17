@@ -1,7 +1,8 @@
 {
-  "token": "",
+  "token": "TOKEN",
   "salons_vocaux": ["Service RP"],
   "salons_blacklist_texte": ["annonces", "HR", "spam"],
   "temps_message": 170,
   "plafond_texte_pour_contrat": 0.3
 }
+

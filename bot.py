@@ -4,7 +4,7 @@ import json
 import os
 import aiosqlite
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # Charger config
 with open("config.json") as f:
@@ -13,7 +13,7 @@ with open("config.json") as f:
 TOKEN = os.getenv("DISCORD_TOKEN") or config["token"]
 salons_vocaux = config["salons_vocaux"]
 salons_blacklist = config["salons_blacklist_texte"]
-temps_message = config["temps_message"]  # 2m50 = 170s
+temps_message = config["temps_message"]  # secondes
 plafond_texte = config["plafond_texte_pour_contrat"]
 
 intents = discord.Intents.default()
@@ -25,7 +25,6 @@ intents.message_content = True
 
 bot = discord.Client(intents=intents)
 
-# Base de données
 DB_FILE = "database.sqlite"
 
 async def init_db():
@@ -52,7 +51,7 @@ async def init_db():
         ''')
         await db.commit()
 
-# Gérer temps vocal
+# Temps vocal
 vocal_sessions = {}
 
 @bot.event
@@ -63,25 +62,27 @@ async def on_ready():
 @bot.event
 async def on_voice_state_update(member, before, after):
     if after.channel and after.channel.name in salons_vocaux and not after.self_mute:
-        # Début session vocal
         vocal_sessions[member.id] = datetime.utcnow()
     elif before.channel and member.id in vocal_sessions:
-        # Fin session vocal
         start = vocal_sessions.pop(member.id)
-        delta = (datetime.utcnow() - start).total_seconds() / 60  # minutes
+        delta = int((datetime.utcnow() - start).total_seconds() / 60)
         async with aiosqlite.connect(DB_FILE) as db:
-            await db.execute('INSERT INTO sessions(user_id, type, start, end) VALUES (?,?,?,?)',
-                             (member.id, "vocal", start, datetime.utcnow()))
-            await db.execute('UPDATE users SET vocal_total = vocal_total + ? WHERE id = ?',
-                             (int(delta), member.id))
+            await db.execute(
+                'INSERT INTO sessions(user_id, type, start, end) VALUES (?,?,?,?)',
+                (member.id, "vocal", start, datetime.utcnow())
+            )
+            await db.execute(
+                'UPDATE users SET vocal_total = vocal_total + ? WHERE id = ?',
+                (delta, member.id)
+            )
             await db.commit()
 
-# Gérer activité texte
+# Temps texte
 text_timers = {}
 
 @bot.event
 async def on_message(message):
-    if message.author.bot: 
+    if message.author.bot:
         return
     if message.channel.name in salons_blacklist:
         return
@@ -90,16 +91,22 @@ async def on_message(message):
 
     user_id = message.author.id
 
-    # Timer reset
+    # Annuler ancien timer
     if user_id in text_timers:
         text_timers[user_id].cancel()
 
     async def add_text_time():
         async with aiosqlite.connect(DB_FILE) as db:
-            await db.execute('UPDATE users SET text_total = text_total + ? WHERE id = ?',
-                             (int(temps_message/60), user_id))
+            await db.execute(
+                'UPDATE users SET text_total = text_total + ? WHERE id = ?',
+                (int(temps_message / 60), user_id)
+            )
             await db.commit()
 
-    text_timers[user_id] = bot.loop.call_later(temps_message, asyncio.create_task, add_text_time())
+    # Créer un nouveau timer
+    text_timers[user_id] = asyncio.get_event_loop().call_later(
+        temps_message, lambda: asyncio.create_task(add_text_time())
+    )
 
 bot.run(TOKEN)
+
